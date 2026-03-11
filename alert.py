@@ -1,4 +1,5 @@
 import urllib.parse
+from datetime import datetime, timedelta
 
 import requests
 
@@ -63,6 +64,66 @@ def get_clothing_suggestion(apparent_min, apparent_max):
     return f"Roupa sugerida: {base}"
 
 
+def get_rain_risk_level(precipitation):
+    """Return a simple daily rain risk level from precipitation sum (mm)."""
+    try:
+        precipitation = float(precipitation)
+    except (TypeError, ValueError):
+        return "Risco de chuva: N/A"
+
+    if precipitation < 2:
+        return "Risco de chuva: Baixo"
+    if precipitation < 10:
+        return "Risco de chuva: Moderado"
+    return "Risco de chuva: Alto"
+
+
+def format_grouped_rain_windows(rain_hours):
+    """Group continuous hourly rain slots into readable time windows."""
+    parsed_hours = []
+    for item in rain_hours:
+        try:
+            hour = datetime.strptime(item.get("hour", ""), "%H:%M")
+            rain = float(item.get("rain", 0))
+        except (TypeError, ValueError):
+            continue
+        parsed_hours.append({"hour": hour, "rain": rain})
+
+    if not parsed_hours:
+        return ""
+
+    parsed_hours.sort(key=lambda x: x["hour"])
+    windows = []
+    current_window = {
+        "start": parsed_hours[0]["hour"],
+        "end": parsed_hours[0]["hour"],
+        "max_rain": parsed_hours[0]["rain"],
+    }
+
+    for item in parsed_hours[1:]:
+        if item["hour"] - current_window["end"] == timedelta(hours=1):
+            current_window["end"] = item["hour"]
+            current_window["max_rain"] = max(current_window["max_rain"], item["rain"])
+        else:
+            windows.append(current_window)
+            current_window = {
+                "start": item["hour"],
+                "end": item["hour"],
+                "max_rain": item["rain"],
+            }
+
+    windows.append(current_window)
+
+    rain_windows = []
+    for window in windows:
+        start = window["start"].strftime("%H:%M")
+        end = window["end"].strftime("%H:%M")
+        period = start if start == end else f"{start}-{end}"
+        rain_windows.append(f"{period} (ate {window['max_rain']:.1f}mm)")
+
+    return ", ".join(rain_windows)
+
+
 def format_weather_message(weather_info_list):
     """Format weather data into a readable message string."""
     def safe_round(value, decimals=1):
@@ -88,6 +149,7 @@ def format_weather_message(weather_info_list):
             apparent_max = safe_round(daily.get("apparent_temp_max", "N/A"))
             apparent_min = safe_round(daily.get("apparent_temp_min", "N/A"))
             precipitation = safe_round(daily.get("precipitation", "N/A"))
+            rain_risk = get_rain_risk_level(daily.get("precipitation", "N/A"))
             clothing_suggestion = get_clothing_suggestion(
                 daily.get("apparent_temp_min", "N/A"),
                 daily.get("apparent_temp_max", "N/A"),
@@ -96,13 +158,14 @@ def format_weather_message(weather_info_list):
             message += f"Temperatura: {temp_max}°C | {temp_min}°C\n"
             message += f"Sensacao Termica: {apparent_max}°C | {apparent_min}°C\n"
             message += f"Precipitacao: {precipitation} mm\n"
+            message += f"{rain_risk}\n"
             message += f"{clothing_suggestion}\n"
 
         if "hourly" in weather_info:
             hourly = weather_info["hourly"]
             rain_hours = hourly.get("rain_hours", [])
             if rain_hours:
-                rain_details = ", ".join(f"{h['hour']} ({h['rain']}mm)" for h in rain_hours)
+                rain_details = format_grouped_rain_windows(rain_hours)
                 message += f"Chuva prevista: {rain_details}\n"
             else:
                 daily_precip = weather_info.get("daily", {}).get("precipitation", 0)

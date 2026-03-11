@@ -16,6 +16,10 @@ except ImportError:
 
 PHONE_NUMBER = os.getenv("PHONE_NUMBER")
 CALLMEBOT_API_KEY = os.getenv("CALLMEBOT_API_KEY")
+try:
+    RAIN_INTENSITY_THRESHOLD_MM = float(os.getenv("RAIN_INTENSITY_THRESHOLD_MM", "0.2"))
+except ValueError:
+    RAIN_INTENSITY_THRESHOLD_MM = 0.2
 
 if not PHONE_NUMBER or not CALLMEBOT_API_KEY:
     raise ValueError(
@@ -106,9 +110,9 @@ def fetch_weather_data(city_name, city_coords):
     print("\nHourly data\n", hourly_dataframe)
 
     rain_hours = []
-    for i, row in hourly_dataframe.iterrows():
+    for _, row in hourly_dataframe.iterrows():
         rain_mm = float(row["precipitation"])
-        if rain_mm > 0:
+        if rain_mm >= RAIN_INTENSITY_THRESHOLD_MM:
             hour_str = row["date"].strftime("%H:%M")
             rain_hours.append({"hour": hour_str, "rain": round(rain_mm, 1)})
 
