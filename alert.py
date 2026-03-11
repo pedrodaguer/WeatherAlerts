@@ -105,6 +105,10 @@ def format_weather_message(weather_info_list):
                 rain_details = ", ".join(f"{h['hour']} ({h['rain']}mm)" for h in rain_hours)
                 message += f"Chuva prevista: {rain_details}\n"
             else:
-                message += "Sem previsao de chuva\n"
+                daily_precip = weather_info.get("daily", {}).get("precipitation", 0)
+                if isinstance(daily_precip, (int, float)) and daily_precip > 0:
+                    message += "Chuva prevista ao longo do dia (sem horario definido)\n"
+                else:
+                    message += "Sem previsao de chuva\n"
 
     return message
