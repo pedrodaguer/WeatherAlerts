@@ -38,6 +38,31 @@ def send_weather_alert(phone_number, api_key, weather_info_list):
         raise
 
 
+def get_clothing_suggestion(apparent_min, apparent_max):
+    """Return clothing guidance for a person who feels cold easily."""
+    try:
+        apparent_min = float(apparent_min)
+        apparent_max = float(apparent_max)
+    except (TypeError, ValueError):
+        return "Roupa sugerida: Nao foi possivel estimar hoje"
+
+    if apparent_min <= 10:
+        base = "casaco pesado + blusa de manga longa + calca"
+    elif apparent_min <= 14:
+        base = "casaco medio + blusa"
+    elif apparent_min <= 18:
+        base = "casaco leve ou moletom fino"
+    elif apparent_min <= 22:
+        base = "camiseta com sobreposicao leve"
+    else:
+        base = "roupas leves"
+
+    if apparent_max - apparent_min >= 8 and apparent_max >= 24:
+        return f"Roupa sugerida: {base}; use camadas para tirar ao longo do dia"
+
+    return f"Roupa sugerida: {base}"
+
+
 def format_weather_message(weather_info_list):
     """Format weather data into a readable message string."""
     def safe_round(value, decimals=1):
@@ -63,10 +88,15 @@ def format_weather_message(weather_info_list):
             apparent_max = safe_round(daily.get("apparent_temp_max", "N/A"))
             apparent_min = safe_round(daily.get("apparent_temp_min", "N/A"))
             precipitation = safe_round(daily.get("precipitation", "N/A"))
+            clothing_suggestion = get_clothing_suggestion(
+                daily.get("apparent_temp_min", "N/A"),
+                daily.get("apparent_temp_max", "N/A"),
+            )
 
             message += f"Temperatura: {temp_max}°C | {temp_min}°C\n"
             message += f"Sensacao Termica: {apparent_max}°C | {apparent_min}°C\n"
             message += f"Precipitacao: {precipitation} mm\n"
+            message += f"{clothing_suggestion}\n"
 
         if "hourly" in weather_info:
             hourly = weather_info["hourly"]
