@@ -76,7 +76,8 @@ def fetch_weather_data(city_name, city_coords):
             "temperature_2m_min",
             "precipitation_sum",
         ],
-        "hourly": "rain",
+        # Use total hourly precipitation to match daily precipitation_sum.
+        "hourly": "precipitation",
         "timezone": "auto",
         "forecast_days": 1,
     }
@@ -89,7 +90,7 @@ def fetch_weather_data(city_name, city_coords):
     print(f"Timezone: {response.Timezone()}{response.TimezoneAbbreviation()}")
 
     hourly = response.Hourly()
-    hourly_rain = hourly.Variables(0).ValuesAsNumpy()
+    hourly_precipitation = hourly.Variables(0).ValuesAsNumpy()
 
     hourly_data = {
         "date": pd.date_range(
@@ -98,7 +99,7 @@ def fetch_weather_data(city_name, city_coords):
             freq=pd.Timedelta(seconds=hourly.Interval()),
             inclusive="left",
         ),
-        "rain": hourly_rain,
+        "precipitation": hourly_precipitation,
     }
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
@@ -106,7 +107,7 @@ def fetch_weather_data(city_name, city_coords):
 
     rain_hours = []
     for i, row in hourly_dataframe.iterrows():
-        rain_mm = float(row["rain"])
+        rain_mm = float(row["precipitation"])
         if rain_mm > 0:
             hour_str = row["date"].strftime("%H:%M")
             rain_hours.append({"hour": hour_str, "rain": round(rain_mm, 1)})
