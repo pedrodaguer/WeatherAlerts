@@ -6,7 +6,7 @@ import pandas as pd
 import requests_cache
 from retry_requests import retry
 
-from alert import format_weather_message, get_cities_by_day, send_weather_alert
+from alert import get_cities_by_day, send_weather_alert
 
 try:
     from dotenv import load_dotenv
@@ -14,16 +14,36 @@ try:
 except ImportError:
     pass
 
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+def parse_phone_numbers(raw_value):
+    """Parse comma/semicolon-separated phone numbers preserving order."""
+    if not raw_value:
+        return []
+
+    normalized = raw_value.replace(";", ",")
+    numbers = []
+    for item in normalized.split(","):
+        phone = item.strip()
+        if phone and phone not in numbers:
+            numbers.append(phone)
+    return numbers
+
+
+PHONE_NUMBER = os.getenv("PHONE_NUMBER", "").strip()
+PHONE_NUMBERS = parse_phone_numbers(os.getenv("PHONE_NUMBERS", ""))
+
+# Keep backward compatibility: include PHONE_NUMBER if present.
+if PHONE_NUMBER and PHONE_NUMBER not in PHONE_NUMBERS:
+    PHONE_NUMBERS.append(PHONE_NUMBER)
+
 CALLMEBOT_API_KEY = os.getenv("CALLMEBOT_API_KEY")
 try:
     RAIN_INTENSITY_THRESHOLD_MM = float(os.getenv("RAIN_INTENSITY_THRESHOLD_MM", "0.2"))
 except ValueError:
     RAIN_INTENSITY_THRESHOLD_MM = 0.2
 
-if not PHONE_NUMBER or not CALLMEBOT_API_KEY:
+if not PHONE_NUMBERS or not CALLMEBOT_API_KEY:
     raise ValueError(
-        "Set PHONE_NUMBER and CALLMEBOT_API_KEY in .env or environment variables. "
+        "Set PHONE_NUMBERS (or PHONE_NUMBER) and CALLMEBOT_API_KEY in .env or environment variables. "
         "See .env.example for reference."
     )
 
@@ -63,7 +83,11 @@ def get_weather_and_send_alerts():
         all_weather_info.append(weather_info)
 
     if all_weather_info:
-        send_weather_alert(PHONE_NUMBER, CALLMEBOT_API_KEY, all_weather_info)
+        for phone_number in PHONE_NUMBERS:
+            try:
+                send_weather_alert(phone_number, CALLMEBOT_API_KEY, all_weather_info)
+            except Exception as e:
+                print(f"✗ Falha ao enviar para {phone_number}: {e}")
 
 
 def fetch_weather_data(city_name, city_coords):
