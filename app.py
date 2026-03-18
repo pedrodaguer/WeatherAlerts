@@ -79,9 +79,10 @@ def fetch_weather_data(city_name, city_coords):
             "temperature_2m_max",
             "temperature_2m_min",
             "precipitation_sum",
+            "precipitation_probability_max",
         ],
-        # Use total hourly precipitation to match daily precipitation_sum.
-        "hourly": "precipitation",
+        # Use hourly precipitation and probability for detailed messaging.
+        "hourly": ["precipitation", "precipitation_probability"],
         "timezone": "auto",
         "forecast_days": 1,
     }
@@ -95,6 +96,7 @@ def fetch_weather_data(city_name, city_coords):
 
     hourly = response.Hourly()
     hourly_precipitation = hourly.Variables(0).ValuesAsNumpy()
+    hourly_precipitation_probability = hourly.Variables(1).ValuesAsNumpy()
 
     hourly_data = {
         "date": pd.date_range(
@@ -104,14 +106,38 @@ def fetch_weather_data(city_name, city_coords):
             inclusive="left",
         ),
         "precipitation": hourly_precipitation,
+        "precipitation_probability": hourly_precipitation_probability,
     }
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
     print("\nHourly data\n", hourly_dataframe)
 
     rain_hours = []
+    probability_samples_by_period = {
+        "manha": [],
+        "tarde": [],
+        "noite": [],
+    }
+
     for _, row in hourly_dataframe.iterrows():
         rain_mm = float(row["precipitation"])
+        rain_probability = row.get("precipitation_probability")
+        hour = row["date"].hour
+
+        if pd.notna(rain_probability):
+            rain_probability = int(round(float(rain_probability)))
+            if 6 <= hour <= 11:
+                period_key = "manha"
+            elif 12 <= hour <= 17:
+                period_key = "tarde"
+            elif 18 <= hour <= 23:
+                period_key = "noite"
+            else:
+                period_key = None
+
+            if period_key:
+                probability_samples_by_period[period_key].append(rain_probability)
+
         if rain_mm >= RAIN_INTENSITY_THRESHOLD_MM:
             hour_str = row["date"].strftime("%H:%M")
             rain_hours.append({"hour": hour_str, "rain": round(rain_mm, 1)})
@@ -123,6 +149,7 @@ def fetch_weather_data(city_name, city_coords):
     daily_temperature_2m_max = daily.Variables(3).ValuesAsNumpy()
     daily_temperature_2m_min = daily.Variables(4).ValuesAsNumpy()
     daily_precipitation_sum = daily.Variables(5).ValuesAsNumpy()
+    daily_precipitation_probability_max = daily.Variables(6).ValuesAsNumpy()
 
     daily_data = {
         "date": pd.date_range(
@@ -137,6 +164,7 @@ def fetch_weather_data(city_name, city_coords):
         "temperature_2m_max": daily_temperature_2m_max,
         "temperature_2m_min": daily_temperature_2m_min,
         "precipitation_sum": daily_precipitation_sum,
+        "precipitation_probability_max": daily_precipitation_probability_max,
     }
 
     daily_dataframe = pd.DataFrame(data=daily_data)
@@ -152,9 +180,17 @@ def fetch_weather_data(city_name, city_coords):
             "apparent_temp_max": round(daily_apparent_temperature_max[0], 1),
             "apparent_temp_min": round(daily_apparent_temperature_min[0], 1),
             "precipitation": round(daily_precipitation_sum[0], 1),
+            "precipitation_probability": round(daily_precipitation_probability_max[0]),
         },
         "hourly": {"rain_hours": rain_hours},
     }
+
+    probability_by_period = {}
+    for period_key, samples in probability_samples_by_period.items():
+        if samples:
+            probability_by_period[period_key] = max(samples)
+
+    weather_info["hourly"]["rain_probability_by_period"] = probability_by_period
 
     return weather_info
 

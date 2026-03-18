@@ -39,43 +39,15 @@ def send_weather_alert(phone_number, api_key, weather_info_list):
         raise
 
 
-def get_clothing_suggestion(apparent_min, apparent_max):
-    """Return clothing guidance for a person who feels cold easily."""
+def format_rain_probability(probability):
+    """Return daily rain probability as percentage text."""
     try:
-        apparent_min = float(apparent_min)
-        apparent_max = float(apparent_max)
+        probability = round(float(probability))
     except (TypeError, ValueError):
-        return "Roupa sugerida: Nao foi possivel estimar hoje"
+        return "Probabilidade de chuva: N/A"
 
-    if apparent_min <= 10:
-        base = "casaco pesado + blusa de manga longa + calca"
-    elif apparent_min <= 14:
-        base = "casaco medio + blusa"
-    elif apparent_min <= 18:
-        base = "casaco leve ou moletom fino"
-    elif apparent_min <= 22:
-        base = "camiseta com sobreposicao leve"
-    else:
-        base = "roupas leves"
-
-    if apparent_max - apparent_min >= 8 and apparent_max >= 24:
-        return f"Roupa sugerida: {base}; use camadas para tirar ao longo do dia"
-
-    return f"Roupa sugerida: {base}"
-
-
-def get_rain_risk_level(precipitation):
-    """Return a simple daily rain risk level from precipitation sum (mm)."""
-    try:
-        precipitation = float(precipitation)
-    except (TypeError, ValueError):
-        return "Risco de chuva: N/A"
-
-    if precipitation < 2:
-        return "Risco de chuva: Baixo"
-    if precipitation < 10:
-        return "Risco de chuva: Moderado"
-    return "Risco de chuva: Alto"
+    probability = max(0, min(100, probability))
+    return f"Probabilidade de chuva: {probability}%"
 
 
 def format_grouped_rain_windows(rain_hours):
@@ -119,9 +91,33 @@ def format_grouped_rain_windows(rain_hours):
         start = window["start"].strftime("%H:%M")
         end = window["end"].strftime("%H:%M")
         period = start if start == end else f"{start}-{end}"
-        rain_windows.append(f"{period} (ate {window['max_rain']:.1f}mm)")
+        rain_windows.append(period)
 
     return ", ".join(rain_windows)
+
+
+def format_probability_by_period(probability_by_period):
+    """Format rain probability grouped by period of day."""
+    if not isinstance(probability_by_period, dict):
+        return ""
+
+    labels = [
+        ("manha", "Manha"),
+        ("tarde", "Tarde"),
+        ("noite", "Noite"),
+    ]
+    parts = []
+
+    for key, label in labels:
+        value = probability_by_period.get(key)
+        if isinstance(value, (int, float)):
+            value = max(0, min(100, round(float(value))))
+            parts.append(f"{label}: {value}%")
+
+    if not parts:
+        return ""
+
+    return "Probabilidade por faixa: " + " | ".join(parts)
 
 
 def format_weather_message(weather_info_list):
@@ -149,28 +145,33 @@ def format_weather_message(weather_info_list):
             apparent_max = safe_round(daily.get("apparent_temp_max", "N/A"))
             apparent_min = safe_round(daily.get("apparent_temp_min", "N/A"))
             precipitation = safe_round(daily.get("precipitation", "N/A"))
-            rain_risk = get_rain_risk_level(daily.get("precipitation", "N/A"))
-            clothing_suggestion = get_clothing_suggestion(
-                daily.get("apparent_temp_min", "N/A"),
-                daily.get("apparent_temp_max", "N/A"),
-            )
+            rain_probability = format_rain_probability(daily.get("precipitation_probability", "N/A"))
 
             message += f"Temperatura: {temp_max}°C | {temp_min}°C\n"
             message += f"Sensacao Termica: {apparent_max}°C | {apparent_min}°C\n"
             message += f"Precipitacao: {precipitation} mm\n"
-            message += f"{rain_risk}\n"
-            message += f"{clothing_suggestion}\n"
+            message += f"{rain_probability}\n"
 
         if "hourly" in weather_info:
             hourly = weather_info["hourly"]
             rain_hours = hourly.get("rain_hours", [])
+
             if rain_hours:
                 rain_details = format_grouped_rain_windows(rain_hours)
                 message += f"Chuva prevista: {rain_details}\n"
             else:
                 daily_precip = weather_info.get("daily", {}).get("precipitation", 0)
+                daily_probability = weather_info.get("daily", {}).get("precipitation_probability")
+
+                try:
+                    daily_probability = float(daily_probability)
+                except (TypeError, ValueError):
+                    daily_probability = None
+
                 if isinstance(daily_precip, (int, float)) and daily_precip > 0:
                     message += "Chuva prevista ao longo do dia (sem horario definido)\n"
+                elif daily_probability is not None and daily_probability > 0:
+                    message += "Possibilidade de chuva ao longo do dia (sem horario definido)\n"
                 else:
                     message += "Sem previsao de chuva\n"
 
