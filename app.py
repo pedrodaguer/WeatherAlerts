@@ -6,7 +6,7 @@ import pandas as pd
 import requests_cache
 from retry_requests import retry
 
-from alert import format_weather_message, get_cities_by_day, send_weather_alert
+from alert import get_cities_by_day, send_weather_alert
 
 try:
     from dotenv import load_dotenv
@@ -14,17 +14,39 @@ try:
 except ImportError:
     pass
 
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")
-CALLMEBOT_API_KEY = os.getenv("CALLMEBOT_API_KEY")
+PHONE_NUMBER_1 = os.getenv("PHONE_NUMBER_1", "").strip()
+CALLMEBOT_API_KEY_1 = os.getenv("CALLMEBOT_API_KEY_1", "").strip()
+PHONE_NUMBER_2 = os.getenv("PHONE_NUMBER_2", "").strip()
+CALLMEBOT_API_KEY_2 = os.getenv("CALLMEBOT_API_KEY_2", "").strip()
+
+PHONE_NUMBERS = []
+CALLMEBOT_API_KEYS = {}
+
+if PHONE_NUMBER_1:
+    PHONE_NUMBERS.append(PHONE_NUMBER_1)
+    CALLMEBOT_API_KEYS[PHONE_NUMBER_1] = CALLMEBOT_API_KEY_1
+
+if PHONE_NUMBER_2:
+    PHONE_NUMBERS.append(PHONE_NUMBER_2)
+    CALLMEBOT_API_KEYS[PHONE_NUMBER_2] = CALLMEBOT_API_KEY_2
 try:
     RAIN_INTENSITY_THRESHOLD_MM = float(os.getenv("RAIN_INTENSITY_THRESHOLD_MM", "0.2"))
 except ValueError:
     RAIN_INTENSITY_THRESHOLD_MM = 0.2
 
-if not PHONE_NUMBER or not CALLMEBOT_API_KEY:
+if not PHONE_NUMBER_1 or not CALLMEBOT_API_KEY_1:
     raise ValueError(
-        "Set PHONE_NUMBER and CALLMEBOT_API_KEY in .env or environment variables. "
-        "See .env.example for reference."
+        "Set PHONE_NUMBER_1 and CALLMEBOT_API_KEY_1 in .env or environment variables."
+    )
+
+if PHONE_NUMBER_2 and not CALLMEBOT_API_KEY_2:
+    raise ValueError(
+        "Set CALLMEBOT_API_KEY_2 when PHONE_NUMBER_2 is configured."
+    )
+
+if CALLMEBOT_API_KEY_2 and not PHONE_NUMBER_2:
+    raise ValueError(
+        "Set PHONE_NUMBER_2 when CALLMEBOT_API_KEY_2 is configured."
     )
 
 cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
@@ -63,7 +85,12 @@ def get_weather_and_send_alerts():
         all_weather_info.append(weather_info)
 
     if all_weather_info:
-        send_weather_alert(PHONE_NUMBER, CALLMEBOT_API_KEY, all_weather_info)
+        for phone_number in PHONE_NUMBERS:
+            try:
+                api_key = CALLMEBOT_API_KEYS[phone_number]
+                send_weather_alert(phone_number, api_key, all_weather_info)
+            except Exception as e:
+                print(f"✗ Falha ao enviar para {phone_number}: {e}")
 
 
 def fetch_weather_data(city_name, city_coords):
@@ -79,9 +106,10 @@ def fetch_weather_data(city_name, city_coords):
             "temperature_2m_max",
             "temperature_2m_min",
             "precipitation_sum",
+            "precipitation_probability_max",
         ],
-        # Use total hourly precipitation to match daily precipitation_sum.
-        "hourly": "precipitation",
+        # Use hourly precipitation and probability for detailed messaging.
+        "hourly": ["precipitation", "precipitation_probability"],
         "timezone": "auto",
         "forecast_days": 1,
     }
@@ -95,6 +123,7 @@ def fetch_weather_data(city_name, city_coords):
 
     hourly = response.Hourly()
     hourly_precipitation = hourly.Variables(0).ValuesAsNumpy()
+    hourly_precipitation_probability = hourly.Variables(1).ValuesAsNumpy()
 
     hourly_data = {
         "date": pd.date_range(
@@ -104,14 +133,38 @@ def fetch_weather_data(city_name, city_coords):
             inclusive="left",
         ),
         "precipitation": hourly_precipitation,
+        "precipitation_probability": hourly_precipitation_probability,
     }
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
     print("\nHourly data\n", hourly_dataframe)
 
     rain_hours = []
+    probability_samples_by_period = {
+        "manha": [],
+        "tarde": [],
+        "noite": [],
+    }
+
     for _, row in hourly_dataframe.iterrows():
         rain_mm = float(row["precipitation"])
+        rain_probability = row.get("precipitation_probability")
+        hour = row["date"].hour
+
+        if pd.notna(rain_probability):
+            rain_probability = int(round(float(rain_probability)))
+            if 6 <= hour <= 11:
+                period_key = "manha"
+            elif 12 <= hour <= 17:
+                period_key = "tarde"
+            elif 18 <= hour <= 23:
+                period_key = "noite"
+            else:
+                period_key = None
+
+            if period_key:
+                probability_samples_by_period[period_key].append(rain_probability)
+
         if rain_mm >= RAIN_INTENSITY_THRESHOLD_MM:
             hour_str = row["date"].strftime("%H:%M")
             rain_hours.append({"hour": hour_str, "rain": round(rain_mm, 1)})
@@ -123,6 +176,7 @@ def fetch_weather_data(city_name, city_coords):
     daily_temperature_2m_max = daily.Variables(3).ValuesAsNumpy()
     daily_temperature_2m_min = daily.Variables(4).ValuesAsNumpy()
     daily_precipitation_sum = daily.Variables(5).ValuesAsNumpy()
+    daily_precipitation_probability_max = daily.Variables(6).ValuesAsNumpy()
 
     daily_data = {
         "date": pd.date_range(
@@ -137,6 +191,7 @@ def fetch_weather_data(city_name, city_coords):
         "temperature_2m_max": daily_temperature_2m_max,
         "temperature_2m_min": daily_temperature_2m_min,
         "precipitation_sum": daily_precipitation_sum,
+        "precipitation_probability_max": daily_precipitation_probability_max,
     }
 
     daily_dataframe = pd.DataFrame(data=daily_data)
@@ -152,9 +207,17 @@ def fetch_weather_data(city_name, city_coords):
             "apparent_temp_max": round(daily_apparent_temperature_max[0], 1),
             "apparent_temp_min": round(daily_apparent_temperature_min[0], 1),
             "precipitation": round(daily_precipitation_sum[0], 1),
+            "precipitation_probability": round(daily_precipitation_probability_max[0]),
         },
         "hourly": {"rain_hours": rain_hours},
     }
+
+    probability_by_period = {}
+    for period_key, samples in probability_samples_by_period.items():
+        if samples:
+            probability_by_period[period_key] = max(samples)
+
+    weather_info["hourly"]["rain_probability_by_period"] = probability_by_period
 
     return weather_info
 
