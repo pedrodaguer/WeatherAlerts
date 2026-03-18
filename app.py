@@ -14,37 +14,39 @@ try:
 except ImportError:
     pass
 
-def parse_phone_numbers(raw_value):
-    """Parse comma/semicolon-separated phone numbers preserving order."""
-    if not raw_value:
-        return []
+PHONE_NUMBER_1 = os.getenv("PHONE_NUMBER_1", "").strip()
+CALLMEBOT_API_KEY_1 = os.getenv("CALLMEBOT_API_KEY_1", "").strip()
+PHONE_NUMBER_2 = os.getenv("PHONE_NUMBER_2", "").strip()
+CALLMEBOT_API_KEY_2 = os.getenv("CALLMEBOT_API_KEY_2", "").strip()
 
-    normalized = raw_value.replace(";", ",")
-    numbers = []
-    for item in normalized.split(","):
-        phone = item.strip()
-        if phone and phone not in numbers:
-            numbers.append(phone)
-    return numbers
+PHONE_NUMBERS = []
+CALLMEBOT_API_KEYS = {}
 
+if PHONE_NUMBER_1:
+    PHONE_NUMBERS.append(PHONE_NUMBER_1)
+    CALLMEBOT_API_KEYS[PHONE_NUMBER_1] = CALLMEBOT_API_KEY_1
 
-PHONE_NUMBER = os.getenv("PHONE_NUMBER", "").strip()
-PHONE_NUMBERS = parse_phone_numbers(os.getenv("PHONE_NUMBERS", ""))
-
-# Keep backward compatibility: include PHONE_NUMBER if present.
-if PHONE_NUMBER and PHONE_NUMBER not in PHONE_NUMBERS:
-    PHONE_NUMBERS.append(PHONE_NUMBER)
-
-CALLMEBOT_API_KEY = os.getenv("CALLMEBOT_API_KEY")
+if PHONE_NUMBER_2:
+    PHONE_NUMBERS.append(PHONE_NUMBER_2)
+    CALLMEBOT_API_KEYS[PHONE_NUMBER_2] = CALLMEBOT_API_KEY_2
 try:
     RAIN_INTENSITY_THRESHOLD_MM = float(os.getenv("RAIN_INTENSITY_THRESHOLD_MM", "0.2"))
 except ValueError:
     RAIN_INTENSITY_THRESHOLD_MM = 0.2
 
-if not PHONE_NUMBERS or not CALLMEBOT_API_KEY:
+if not PHONE_NUMBER_1 or not CALLMEBOT_API_KEY_1:
     raise ValueError(
-        "Set PHONE_NUMBERS (or PHONE_NUMBER) and CALLMEBOT_API_KEY in .env or environment variables. "
-        "See .env.example for reference."
+        "Set PHONE_NUMBER_1 and CALLMEBOT_API_KEY_1 in .env or environment variables."
+    )
+
+if PHONE_NUMBER_2 and not CALLMEBOT_API_KEY_2:
+    raise ValueError(
+        "Set CALLMEBOT_API_KEY_2 when PHONE_NUMBER_2 is configured."
+    )
+
+if CALLMEBOT_API_KEY_2 and not PHONE_NUMBER_2:
+    raise ValueError(
+        "Set PHONE_NUMBER_2 when CALLMEBOT_API_KEY_2 is configured."
     )
 
 cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
@@ -85,7 +87,8 @@ def get_weather_and_send_alerts():
     if all_weather_info:
         for phone_number in PHONE_NUMBERS:
             try:
-                send_weather_alert(phone_number, CALLMEBOT_API_KEY, all_weather_info)
+                api_key = CALLMEBOT_API_KEYS[phone_number]
+                send_weather_alert(phone_number, api_key, all_weather_info)
             except Exception as e:
                 print(f"✗ Falha ao enviar para {phone_number}: {e}")
 
